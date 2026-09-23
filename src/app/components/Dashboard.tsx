@@ -1,62 +1,78 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { getAppointments, bookAppointment, logout, getMyAppointments } from '../actions';
-import { LogOut, CalendarDays, Clock, CheckCircle } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { getAppointments, bookAppointment, logout, getMyAppointments, cancelAppointment } from '../actions';
+import { LogOut, CalendarDays, Clock, ClipboardList, Heart, X, AlertCircle } from 'lucide-react';
 
-const AVAILABLE_TIMES = [
-  '07:00', '08:00', '09:00', '10:00', 
-  '13:00', '14:00', '15:00', '16:00'
-];
+const TIMES = ['07:00', '08:00', '09:00', '10:00', '13:00', '14:00', '15:00', '16:00'];
+
+const MONTHS = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+
+function initials(name: string) {
+  return name.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase();
+}
+
+function formatDate(iso: string) {
+  const [y, m, d] = iso.split('-');
+  return { day: d, month: MONTHS[parseInt(m) - 1], year: y };
+}
 
 export default function Dashboard({ user }: { user: any }) {
-  // Setup date picker to min today
   const today = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(today);
   const [bookedSlots, setBookedSlots] = useState<string[]>([]);
-  const [myAppointments, setMyAppointments] = useState<any[]>([]);
+  const [myAppointments, setMyAppointments] = useState<{ id: number; date: string; time: string }[]>([]);
   const [loading, setLoading] = useState(false);
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
   const [message, setMessage] = useState({ text: '', type: '' });
 
-  useEffect(() => {
-    fetchData();
-  }, [selectedDate]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     if (!selectedDate) return;
-    
-    // Check if weekend
-    const dateObj = new Date(selectedDate);
-    const dayOfWeek = dateObj.getUTCDay();
-    if (dayOfWeek === 0 || dayOfWeek === 6) { // 0 is Sunday, 6 is Saturday
-      setBookedSlots(AVAILABLE_TIMES); // Disable all on weekends
-      setMessage({ text: 'A clínica não funciona aos finais de semana.', type: 'error' });
+
+    const dateObj = new Date(selectedDate + 'T00:00:00');
+    const dow = dateObj.getDay();
+    if (dow === 0 || dow === 6) {
+      setBookedSlots(TIMES);
+      setMessage({ text: 'A clínica não atende aos finais de semana.', type: 'info' });
       return;
-    } else {
-      setMessage({ text: '', type: '' });
     }
 
-    const slots = await getAppointments(selectedDate);
+    setMessage({ text: '', type: '' });
+    const [slots, mine] = await Promise.all([getAppointments(selectedDate), getMyAppointments()]);
     setBookedSlots(slots);
-    
-    const mine = await getMyAppointments();
     setMyAppointments(mine);
-  };
+  }, [selectedDate]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const mySlotForDate = myAppointments.find(a => a.date === selectedDate)?.time ?? null;
+  const hasApptToday = mySlotForDate !== null;
 
   const handleBook = async (time: string) => {
-    if (bookedSlots.includes(time)) return;
-    
+    if (loading) return;
     setLoading(true);
     setMessage({ text: '', type: '' });
+
     const res = await bookAppointment(selectedDate, time);
-    
     if (res.error) {
       setMessage({ text: res.error, type: 'error' });
     } else {
-      setMessage({ text: 'Agendamento realizado com sucesso!', type: 'success' });
-      fetchData(); // Refresh slots
+      setMessage({ text: 'Consulta agendada com sucesso!', type: 'success' });
+      await fetchData();
     }
     setLoading(false);
+  };
+
+  const handleCancel = async (id: number) => {
+    setCancellingId(id);
+    const res = await cancelAppointment(id);
+    if (res.error) {
+      setMessage({ text: res.error, type: 'error' });
+    } else {
+      setMessage({ text: 'Consulta cancelada.', type: 'success' });
+      await fetchData();
+    }
+    setCancellingId(null);
   };
 
   const handleLogout = async () => {
@@ -65,89 +81,149 @@ export default function Dashboard({ user }: { user: any }) {
   };
 
   return (
-    <div className="animate-fade-in" style={{ padding: '20px 0' }}>
-      <header className="flex items-center" style={{ justifyContent: 'space-between', marginBottom: '32px' }}>
-        <div>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>Olá, {user.name}</h2>
-          <p className="text-muted">Agende sua próxima sessão de fisioterapia.</p>
+    <>
+      {/* Header */}
+      <header className="app-header">
+        <div className="logo">
+          <div className="logo-icon">
+            <Heart size={18} />
+          </div>
+          <span className="logo-name">Fisio<span>Vida</span></span>
         </div>
-        <button onClick={handleLogout} className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer' }}>
-          <LogOut size={16} />
-          Sair
-        </button>
+
+        <div className="header-right">
+          <div className="user-pill">
+            <div className="user-avatar">{initials(user.name)}</div>
+            <span>{user.name.split(' ')[0]}</span>
+          </div>
+          <button onClick={handleLogout} className="btn btn-ghost btn-sm">
+            <LogOut size={15} />
+            Sair
+          </button>
+        </div>
       </header>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '24px' }}>
-        <div className="glass-panel" style={{ padding: '24px' }}>
-          <h3 style={{ fontSize: '1.25rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <CalendarDays size={20} className="text-muted" />
-            Escolha uma Data
-          </h3>
-          
-          <input 
-            type="date" 
-            className="input-field" 
-            min={today}
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            style={{ maxWidth: '300px', marginBottom: '24px' }}
-          />
+      {/* Main content */}
+      <main className="page-content animate-in">
+        {/* Welcome banner */}
+        <div className="welcome-banner">
+          <h2>Olá, {user.name.split(' ')[0]}! 👋</h2>
+          <p>Agende sua próxima sessão de fisioterapia — escolha a data e o horário ideal para você.</p>
+        </div>
 
-          <h3 style={{ fontSize: '1.25rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Clock size={20} className="text-muted" />
-            Horários Disponíveis
-          </h3>
-          
-          {message.text && (
-            <div style={{ padding: '12px', borderRadius: '8px', marginBottom: '16px', backgroundColor: message.type === 'error' ? '#fef2f2' : '#ecfdf5', color: message.type === 'error' ? 'var(--danger)' : 'var(--success)' }}>
-              {message.text}
-            </div>
-          )}
-
-          <div className="slots-grid">
-            {AVAILABLE_TIMES.map(time => {
-              const isBooked = bookedSlots.includes(time);
-              return (
-                <button
-                  key={time}
-                  onClick={() => handleBook(time)}
-                  disabled={isBooked || loading}
-                  className={`slot-item ${isBooked ? 'disabled' : ''}`}
-                >
-                  {time}
-                </button>
-              );
-            })}
+        {message.text && (
+          <div className={`alert ${message.type === 'error' ? 'alert-error' : 'alert-success'} mb-4`}>
+            <AlertCircle size={15} />
+            {message.text}
           </div>
-          <p className="text-muted mt-4" style={{ fontSize: '0.875rem' }}>* Pausa de almoço das 11:00 às 13:00</p>
-        </div>
+        )}
 
-        <div className="glass-panel" style={{ padding: '24px', height: 'fit-content' }}>
-          <h3 style={{ fontSize: '1.25rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <CheckCircle size={20} className="text-muted" />
-            Meus Agendamentos
-          </h3>
-          
-          {myAppointments.length === 0 ? (
-            <p className="text-muted text-center" style={{ fontSize: '0.875rem', padding: '20px 0' }}>
-              Você ainda não tem consultas agendadas.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {myAppointments.map((app, idx) => {
-                // Format date for better reading (YYYY-MM-DD to DD/MM/YYYY)
-                const [y, m, d] = app.date.split('-');
-                return (
-                  <div key={idx} style={{ padding: '12px', border: '1px solid var(--border)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between' }}>
-                    <strong>{d}/{m}/{y}</strong>
-                    <span>{app.time}</span>
-                  </div>
-                )
-              })}
+        <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '24px', alignItems: 'start' }}>
+          {/* Booking panel */}
+          <div className="card">
+            <div className="card-header">
+              <div className="card-icon"><CalendarDays size={18} /></div>
+              <h3>Agendar Consulta</h3>
             </div>
-          )}
+            <div className="card-body">
+              <div className="form-group">
+                <label className="form-label">Selecione a data</label>
+                <input
+                  type="date"
+                  className="input"
+                  style={{ maxWidth: '240px' }}
+                  min={today}
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                />
+              </div>
+
+              <div className="flex items-center gap-2 mb-4" style={{ marginTop: '24px' }}>
+                <div className="card-icon" style={{ width: '28px', height: '28px', borderRadius: '8px' }}>
+                  <Clock size={14} />
+                </div>
+                <span className="font-semibold" style={{ fontSize: '0.9rem' }}>Horários disponíveis</span>
+              </div>
+
+              {hasApptToday && (
+                <div className="alert alert-success mb-4" style={{ fontSize: '0.82rem' }}>
+                  <span>✓</span>
+                  Você já tem uma consulta às {mySlotForDate} neste dia.
+                </div>
+              )}
+
+              <div className="slots-grid">
+                {TIMES.map(time => {
+                  const isMine = time === mySlotForDate;
+                  const isTaken = bookedSlots.includes(time) && !isMine;
+                  const isDisabled = isTaken || loading || (hasApptToday && !isMine);
+
+                  return (
+                    <button
+                      key={time}
+                      className={`slot-btn ${isMine ? 'slot-mine' : isTaken ? 'slot-taken' : ''}`}
+                      onClick={() => !isMine && !isDisabled && handleBook(time)}
+                      disabled={isDisabled && !isMine}
+                      title={isMine ? 'Seu horário' : isTaken ? 'Ocupado' : ''}
+                    >
+                      {time}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p className="text-muted mt-4" style={{ fontSize: '0.78rem' }}>
+                * Pausa de almoço: 11:00–13:00 · Atendimento de segunda a sexta
+              </p>
+            </div>
+          </div>
+
+          {/* My appointments panel */}
+          <div className="card">
+            <div className="card-header">
+              <div className="card-icon"><ClipboardList size={18} /></div>
+              <h3>Minhas Consultas</h3>
+            </div>
+            <div className="card-body" style={{ padding: '16px' }}>
+              {myAppointments.length === 0 ? (
+                <div className="empty-state">
+                  <CalendarDays size={36} />
+                  <p>Você ainda não tem<br />consultas agendadas.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {myAppointments.map(appt => {
+                    const { day, month } = formatDate(appt.date);
+                    return (
+                      <div key={appt.id} className="appt-card">
+                        <div className="appt-info">
+                          <div className="appt-date-badge">
+                            <span className="day">{day}</span>
+                            <span className="month">{month}</span>
+                          </div>
+                          <div className="appt-meta">
+                            <strong>{appt.time}</strong>
+                            <span>Fisioterapia</span>
+                          </div>
+                        </div>
+                        <button
+                          className="btn btn-danger-outline btn-sm"
+                          onClick={() => handleCancel(appt.id)}
+                          disabled={cancellingId === appt.id}
+                          title="Cancelar consulta"
+                        >
+                          <X size={13} />
+                          {cancellingId === appt.id ? '...' : 'Cancelar'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
+      </main>
+    </>
   );
 }

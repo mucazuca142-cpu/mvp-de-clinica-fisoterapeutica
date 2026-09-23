@@ -5,13 +5,6 @@ import Dashboard from './components/Dashboard';
 export default async function Home() {
   const user = await getUser();
 
-  return (
-    <main className="container">
-      {!user ? (
-        <AuthScreen />
-      ) : (
-        <Dashboard user={user} />
-      )}
-    </main>
-  );
+  if (!user) return <AuthScreen />;
+  return <Dashboard user={user} />;
 }
